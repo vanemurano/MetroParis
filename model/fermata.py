@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 @dataclass
-class Fermata:
+class Fermata: #gli attributi della dataclass sono gli stessi della tabella del database
     id_fermata: int
     nome: str
     coordX: int
