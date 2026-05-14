@@ -38,6 +38,45 @@ class DAO():
         return result
 
     @staticmethod
+    def getAllEdgesPesati():  # seleziona tutte le connessioni e conta quante volte si ripetono
+        conn = DBConnect.get_connection()
+
+        result = []
+
+        cursor = conn.cursor(dictionary=True)
+        query = """select id_stazP, id_stazA, count(*) as peso
+                    from connessione c 
+                    group by id_stazP, id_stazA 
+                    order by peso desc"""
+        cursor.execute(query)
+
+        for row in cursor:
+            result.append((row["id_stazP"], row["id_stazA"], row["peso"]))
+        cursor.close()
+        conn.close()
+        return result #ritorna una tupla
+
+    @staticmethod
+    def getAllEdgesVelocita():  # seleziona tutte le connessioni e la loro velocità massima
+        conn = DBConnect.get_connection()
+
+        result = []
+
+        cursor = conn.cursor(dictionary=True)
+        query = """select c.id_stazP, c.id_stazA, max(velocita) as v
+                    from connessione c, linea l
+                    where c.id_linea=l.id_linea 
+                    group by c.id_stazP, c.id_stazA
+                    order by v asc"""
+        cursor.execute(query)
+
+        for row in cursor:
+            result.append((row["id_stazP"], row["id_stazA"], row["v"]))
+        cursor.close()
+        conn.close()
+        return result #ritorna una tupla
+
+    @staticmethod
     def has_connection(u:Fermata, v:Fermata) -> bool:
         conn = DBConnect.get_connection()
 
