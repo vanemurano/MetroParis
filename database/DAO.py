@@ -1,113 +1,89 @@
 from database.DB_connect import DBConnect
-from model.connessione import Connessione
-from model.fermata import Fermata
+from model.album import Album
 
 
 class DAO():
 
-    @staticmethod
-    def getAllFermate():
-        conn = DBConnect.get_connection()
-
-        result = []
-
-        cursor = conn.cursor(dictionary=True)
-        query = "SELECT * FROM fermata"
-        cursor.execute(query)
-
-        for row in cursor:
-            result.append(Fermata(**row))
-        cursor.close()
-        conn.close()
-        return result #ritorna una lista di oggetti Fermata
+    def __init__(self):
+        pass
 
     @staticmethod
-    def getAllEdges(): #seleziona tutte le connessioni
-        conn = DBConnect.get_connection()
+    def getAllNodes():
+        try:
+            conn=DBConnect.get_connection()
+            cursor=conn.cursor(dictionary=True)
+        except ConnectionError:
+            print("Errore di connessione al database")
+            return
 
-        result = []
+        query="""select distinct Chromosome 
+                from genes 
+                where chromosome!=0"""
 
-        cursor = conn.cursor(dictionary=True)
-        query = "SELECT * FROM connessione"
-        cursor.execute(query)
+        res=[]
+
+        cursor.execute(query,)
 
         for row in cursor:
-            result.append(Connessione(**row))
+            res.append(row["Chromosome"])
+
         cursor.close()
         conn.close()
-        return result
+
+        return res # lista di interi cromosoma
 
     @staticmethod
-    def getAllEdgesPesati():  # seleziona tutte le connessioni e conta quante volte si ripetono
-        conn = DBConnect.get_connection()
+    def getAllEdges():
+        try:
+            conn = DBConnect.get_connection()
+            cursor = conn.cursor(dictionary=True)
+        except ConnectionError:
+            print("Errore di connessione al database")
+            return
 
-        result = []
+        query = """select distinct g1.Chromosome as c1, g2.chromosome as c2
+                from interactions i, genes g1, genes g2
+                where i.GeneId1=g1.GeneId 
+                and i.GeneId2=g2.GeneID 
+                and g1.Chromosome!=0 and g2.Chromosome!=0
+                and g1.Chromosome!=g2.Chromosome"""
 
-        cursor = conn.cursor(dictionary=True)
-        query = """select id_stazP, id_stazA, count(*) as peso
-                    from connessione c 
-                    group by id_stazP, id_stazA 
-                    order by peso desc"""
-        cursor.execute(query)
+        res = []
+
+        cursor.execute(query, )
 
         for row in cursor:
-            result.append((row["id_stazP"], row["id_stazA"], row["peso"]))
+            res.append((row["c1"], row["c2"])) # tupla cromosoma1, cromosoma2
+
         cursor.close()
         conn.close()
-        return result #ritorna una tupla
+
+        return res
 
     @staticmethod
-    def getAllEdgesVelocita():  # seleziona tutte le connessioni e la loro velocità massima
-        conn = DBConnect.get_connection()
+    def getEdgeWeight(crom1: int, crom2: int):
+        try:
+            conn = DBConnect.get_connection()
+            cursor = conn.cursor(dictionary=True)
+        except ConnectionError:
+            print("Errore di connessione al database")
+            return
 
-        result = []
+        query = """select sum(correlazione) as peso
+                from (select distinct g1.GeneId as g1, g2.GeneId as g2, i.Expression_Corr as correlazione
+                from interactions i, genes g1, genes g2
+                where i.GeneId1=g1.GeneId
+                and i.GeneId2=g2.GeneID 
+                and g1.Chromosome=%s and g2.Chromosome=%s) as tab"""
 
-        cursor = conn.cursor(dictionary=True)
-        query = """select c.id_stazP, c.id_stazA, max(velocita) as v
-                    from connessione c, linea l
-                    where c.id_linea=l.id_linea 
-                    group by c.id_stazP, c.id_stazA
-                    order by v asc"""
-        cursor.execute(query)
+        res = 0
 
-        for row in cursor:
-            result.append((row["id_stazP"], row["id_stazA"], row["v"]))
-        cursor.close()
-        conn.close()
-        return result #ritorna una tupla
-
-    @staticmethod
-    def has_connection(u:Fermata, v:Fermata) -> bool:
-        conn = DBConnect.get_connection()
-
-        result = []
-
-        cursor = conn.cursor(dictionary=True)
-        query = """select * from connessione c
-                where id_stazP=%s and id_stazA = %s"""
-        cursor.execute(query, (u.id_fermata, v.id_fermata,))
-        #non passo l'intero oggetto fermata ma solo l'id per il controllo nel db
+        cursor.execute(query, (crom1, crom2,))
 
         for row in cursor:
-            result.append(row)
+            res=row["peso"] # restituisce direttamente un float
+
         cursor.close()
         conn.close()
-        return len(result)>0
 
-    @staticmethod
-    def get_vicini(u: Fermata):
-        conn = DBConnect.get_connection()
-
-        result = []
-
-        cursor = conn.cursor(dictionary=True)
-        query = """select * from connessione c 
-                    where id_stazP=%s"""
-        cursor.execute(query, (u.id_fermata,))
-        # non passo l'intero oggetto fermata ma solo l'id per il controllo nel db
-
-        for row in cursor:
-            result.append(Connessione(**row))
-        cursor.close()
-        conn.close()
-        return result
+        return res

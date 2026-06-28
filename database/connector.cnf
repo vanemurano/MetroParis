@@ -2,5 +2,5 @@
 user=root
 password=vane
 host=127.0.0.1
-database=metroparis
+database=genes_small
 raise_on_warnings=True

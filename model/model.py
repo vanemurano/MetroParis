@@ -1,150 +1,66 @@
+import copy
+
 import geopy.distance
 
 from database.DAO import DAO
 import networkx as nx
 
-
-def getPesoTempoPercorrenza(u, v, vel): #metodo statico che non fa parte della classe
-    dist=geopy.distance.distance((u.coordX, u.coordY),
-                                 (v.coordX, v.coordY)).km #calcola la distanza geodesica (in km) tra due punti, cioè su una sfera
-    #riceve due tuple di coordinate geografiche
-    time=dist/vel*60 #tempo di percorrenza come distanza tra due fermate / la velocità della linea (lo prendiamo in minuti)
-    return time
-
 class Model:
     def __init__(self):
-        self._fermate = DAO.getAllFermate()
-        self._grafo=nx.DiGraph() #grafo semplice ma orientato
-        self._idMapFermate={} #dizionario con chiave l'id fermata e valore la fermata stessa
-        for f in self._fermate:
-            self._idMapFermate[f.id_fermata] = f
+        self._graph=nx.DiGraph() # semplice, orientato e pesato
+        self._nodes=[]
+        self._bestPath=[]
+        self._bestScore=0
 
-    def getShortestPath(self, u, v):
-        return nx.single_source_dijkstra(self._grafo, u, v) #implementazione di dijkstra che si aspetta come argomento
-        # un grafo, un nodo source e un nodo target
-        # e restituisce una tupla con il peso del cammino più breve e la lista di nodi del cammino stesso
+    def buildGraph(self):
+        self._nodes=DAO.getAllNodes()
+        self._graph.add_nodes_from(self._nodes)
+        for c1, c2 in DAO.getAllEdges():
+            if c1 in self._nodes and c2 in self._nodes:
+                peso=DAO.getEdgeWeight(c1, c2)
+                self._graph.add_edge(c1, c2, weight=peso)
 
-    def buildGraphPesato(self):
-        self._grafo.clear()
-        self._grafo.add_nodes_from(self._fermate) #non cambiamo tipo di grafo perché il digraph ammette archi pesati
-        #self.addEdgesPesati()
-        self.addEdgesPesatiTempi()
+    def getNNodes(self):
+        return len(self._nodes)
 
-    def addEdgesPesatiTempi(self):
-        #questo metodo crea degli archi, in cui il peso è pari
-        #al tempo di percorrenza di quell'arco, ottenuto come rapporto
-        #tra la distanza fra due stazioni e la velocità di percorrenza
-        self._grafo.clear_edges()
-        allEdgesVel=DAO.getAllEdgesVelocita()
-        for e in allEdgesVel:
-            u = self._idMapFermate[e[0]]
-            v = self._idMapFermate[e[1]]
-            peso = getPesoTempoPercorrenza(u, v, e[2]) #e[2] è la velocità
-            self._grafo.add_edge(u, v, weight=peso)
+    def getNEdges(self):
+        return len(self._graph.edges)
 
-    def addEdgesPesati(self):
-        #riutilizzo il funzionamento di addedges3
-        #ma contando quante volte provo ad aggiungere l'arco
-        self._grafo.clear_edges()
-        # senza ciclo for, prende le informazioni direttamente dal db
-        all_edges = DAO.getAllEdges()
-        for conn in all_edges:
-            u = self._idMapFermate[conn.id_stazP]
-            v = self._idMapFermate[conn.id_stazA]
-            if self._grafo.has_edge(u, v):
-                self._grafo[u][v]["weight"]+=1
-                #accedo al peso dell'arco e lo incremento (se esiste già)
-            else:
-                #se non esiste già, lo aggiungo
-                self._grafo.add_edge(u, v, weight=1)
-                #se la query sql è complicata, conviene questo tipo di approccio
-                #in questo caso la query sql sarebbe comunque semplice
+    def getMinMaxWeight(self):
+        maxEdge=max(self._graph.edges(data="weight"), key=lambda x: x[2])
+        minEdge=min(self._graph.edges(data="weight"), key=lambda x: x[2])
+        return float(minEdge[2]), float(maxEdge[2]) # pesi dell'arco minimo e massimo
 
-    def addEdgesPesatiV2(self):
-        #delega il calcolo del peso alla query sql, per semplificarci la vita in python
-        self._grafo.clear_edges()
-        allEdgesWPeso=DAO.getAllEdgesPesati()
-        for e in allEdgesWPeso:
-            u = self._idMapFermate[e[0]]
-            v = self._idMapFermate[e[1]]
-            peso=e[2]
-            self._grafo.add_edge(u, v, weight=peso)
+    def contaArchi(self, s: float):
+        numMaggiori=0
+        numMinori=0
+        for c1, c2, peso in self._graph.edges(data="weight"):
+            if peso<s:
+                numMinori+=1
+            if peso>s:
+                numMaggiori+=1
+        return numMinori, numMaggiori
 
-    def getArchiPesoMaggiore(self):
-        edges=self._grafo.edges(data=True) #edges è un metodo di grafo
-        #il parametro data=True indica che insieme agli archi vengono salvati gli attributi associati
-        edgesMaggiori=[]
-        for e in edges:
-            if self._grafo.get_edge_data(e[0], e[1]) ["weight"] > 1: #
-                edgesMaggiori.append(e)
-        return edgesMaggiori
+    def getBestPath(self, soglia):
+        parziale=[]
+        self._bestPath=[]
+        self._bestScore=-10000 # impossibile da raggiungere
+        for n in self._nodes:
+            parziale.append(n)
+            self._ricorsione(soglia, parziale, 0)
+            parziale.pop()
+        return self._bestPath, self._bestScore
 
-    def getBFSNodesFromEdges(self, source): #source è il nodo di partenza
-        #esplorazione del grafo per livelli(breadth-first)
-        archi=nx.bfs_edges(self._grafo, source) #restituisce un iterable di tuple, che rappresentano i nodi visitati
-        nodiBFS=[]
-        for u, v in archi: #nodo di partenza e di arrivo
-            nodiBFS.append(v) #nodo visitato
-        return nodiBFS
+    def _ricorsione(self, s, parziale, score):
+        # condizione di ottimalità
+        if score>self._bestScore:
+            self._bestPath=copy.deepcopy(parziale)
+            self._bestScore=score
+        for n in self._graph.successors(parziale[-1]):
+            peso_arco=self._graph[parziale[-1]][n]["weight"]
+            if peso_arco>s and n not in parziale:
+                parziale.append(n)
+                nuovo_score=score+peso_arco
+                self._ricorsione(s, parziale, nuovo_score)
+                parziale.pop() # backtracking
 
-    def getDFSNodesFromEdges(self, source): #source è il nodo di partenza
-        #esplorazione del grafo in profondità(depth-first)
-        archi=nx.dfs_edges(self._grafo, source) #restituisce un iterable di tuple, che rappresentano i nodi visitati
-        nodiDFS=[]
-        for u, v in archi: #nodo di partenza e di arrivo
-            nodiDFS.append(v) #nodo visitato
-        return nodiDFS
-
-    def getBFSNodesFromTree(self, source):
-        tree=nx.bfs_tree(self._grafo, source) #restituisce l'albero di visita
-        archi=list(tree.edges())
-        nodi=list(tree.nodes())
-        return nodi
-
-    def getDFSNodesFromTree(self, source):
-        tree=nx.dfs_tree(self._grafo, source) #restituisce l'albero di visita DFS
-        archi=list(tree.edges())
-        nodi=list(tree.nodes())
-        return nodi
-
-    def buildGraph(self): #viene richiamato all'inizio della funzione
-        self._grafo.clear() #svuota il grafo ogni volta che viene richiamata la funzione
-        self._grafo.add_nodes_from(self._fermate) #perché abbiamo già la lista di fermate prese dal database
-        self.add_edges3()
-
-    def add_edges(self):
-        self._grafo.clear_edges()
-        #prima verifico se i due nodi abbiano una connessione
-        for u in self._fermate:
-            for v in self._fermate:
-                if DAO.has_connection(u,v):
-                    self._grafo.add_edge(u,v)
-        #TROPPO LENTO: inefficiente per grafi grandi
-
-    def add_edges2(self): #metodo più veloce
-        self._grafo.clear_edges()
-        #unico ciclo for
-        for u in self._fermate:
-            for conn in DAO.get_vicini(u):
-                v=self._idMapFermate[conn.id_stazA]
-                #prendo l'oggetto fermata passando il suo id al dizionario
-                self._grafo.add_edge(u,v)
-
-    def add_edges3(self):
-        self._grafo.clear_edges()
-        #senza ciclo for, prende le informazioni direttamente dal db
-        all_edges=DAO.getAllEdges()
-        for conn in all_edges:
-            u=self._idMapFermate[conn.id_stazP]
-            v=self._idMapFermate[conn.id_stazA]
-            self._grafo.add_edge(u, v)
-
-    def get_num_nodi(self):
-        return len(self._grafo.nodes())
-
-    def get_num_archi(self):
-        return len(self._grafo.edges())
-
-    @property
-    def fermate(self):
-        return self._fermate
